@@ -2867,4 +2867,4 @@ if __name__ == "__main__":
   
   # Start infinity polling to listen for updates reliably
   bot.remove_webhook()
-  bot.infinity_polling(skip_pending=True)
+  # bot.infinity_polling(skip_pending=True)
