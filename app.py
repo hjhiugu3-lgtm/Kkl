@@ -51,6 +51,28 @@ def init_db():
   except sqlite3.OperationalError:
     pass
 
+  # تحديث جدول الملفات الشخصية لدعم ميزة سلسلة الحضور (Daily Streaks)
+  cursor.execute("""CREATE TABLE IF NOT EXISTS user_profiles (
+                        user_id INTEGER PRIMARY KEY,
+                        full_name TEXT,
+                        username TEXT,
+                        joined_timestamp REAL DEFAULT 0,
+                        streak_count INTEGER DEFAULT 0,
+                        last_attendance_date TEXT
+                    )""")
+  try:
+    cursor.execute(
+        "ALTER TABLE user_profiles ADD COLUMN streak_count INTEGER DEFAULT 0"
+    )
+  except sqlite3.OperationalError:
+    pass
+  try:
+    cursor.execute(
+        "ALTER TABLE user_profiles ADD COLUMN last_attendance_date TEXT"
+    )
+  except sqlite3.OperationalError:
+    pass
+
   cursor.execute("""CREATE TABLE IF NOT EXISTS polls (
                         poll_id TEXT PRIMARY KEY, 
                         owner_id INTEGER, 
@@ -102,7 +124,6 @@ def init_db():
   except sqlite3.OperationalError:
     pass
 
-  # جدول تتبع إجمالي الزوار لكل قناة (أكثر القنوات حصولاً على الزوار)
   cursor.execute("""CREATE TABLE IF NOT EXISTS channel_total_visits (
                         channel_id TEXT PRIMARY KEY,
                         channel_title TEXT,
@@ -111,13 +132,6 @@ def init_db():
 
   cursor.execute("""CREATE TABLE IF NOT EXISTS authorized_question_creators (
                         user_id INTEGER PRIMARY KEY
-                    )""")
-
-  cursor.execute("""CREATE TABLE IF NOT EXISTS user_profiles (
-                        user_id INTEGER PRIMARY KEY,
-                        full_name TEXT,
-                        username TEXT,
-                        joined_timestamp REAL DEFAULT 0
                     )""")
 
   cursor.execute("""CREATE TABLE IF NOT EXISTS interactions (
@@ -230,7 +244,8 @@ def log_user_interaction(user_id, username, first_name):
     is_new = True
     cursor.execute(
         "INSERT INTO user_profiles (user_id, full_name, username,"
-        " joined_timestamp) VALUES (?, ?, ?, ?)",
+        " joined_timestamp, streak_count, last_attendance_date) VALUES (?, ?,"
+        " ?, ?, 0, '')",
         (user_id, first_name, uname_str, now_ts),
     )
   else:
@@ -606,7 +621,7 @@ def callback_check_subscription(call):
     )
 
 
-# --- معالج زر تسجيل الحضور وتحديث عداد زوار القناة تلقائياً ---
+# --- معالج زر تسجيل الحضور وتحديث سلسلة الحضور (Daily Streaks) تلقائياً ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("attend_"))
 def handle_attendance_click(call):
   user_id = call.from_user.id
@@ -688,6 +703,8 @@ def handle_attendance_click(call):
   cursor.execute("UPDATE polls SET count = ? WHERE poll_id = ?", (new_count, poll_id))
 
   today_str = datetime.now().strftime("%Y-%m-%d")
+  yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
   cursor.execute(
       "INSERT INTO channel_daily_attendance (user_id, channel_id, date_str,"
       " count) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, channel_id, date_str) DO"
@@ -695,7 +712,38 @@ def handle_attendance_click(call):
       (user_id, channel_id, today_str),
   )
 
-  # تحديث وزيادة عداد الزوار الكلي للقناة (أكثر القنوات حصولاً على الزوار)
+  # فحص وتحديث ميزة سلسلة الحضور (Daily Streaks)
+  cursor.execute(
+      "SELECT streak_count, last_attendance_date FROM user_profiles WHERE"
+      " user_id = ?",
+      (user_id,),
+  )
+  streak_row = cursor.fetchone()
+  current_streak = 0
+  last_date = ""
+  if streak_row:
+    current_streak = streak_row[0] or 0
+    last_date = streak_row[1] or ""
+
+  if last_date == today_str:
+    streak_msg_extra = ""
+  elif last_date == yesterday_str:
+    current_streak += 1
+    cursor.execute(
+        "UPDATE user_profiles SET streak_count = ?, last_attendance_date = ? WHERE"
+        " user_id = ?",
+        (current_streak, today_str, user_id),
+    )
+    streak_msg_extra = f"\n🔥 سلسلة حضور متتالية: {current_streak} أيام!"
+  else:
+    current_streak = 1
+    cursor.execute(
+        "UPDATE user_profiles SET streak_count = ?, last_attendance_date = ? WHERE"
+        " user_id = ?",
+        (current_streak, today_str, user_id),
+    )
+    streak_msg_extra = "\n🔥 بدأت سلسلة حضور جديدة اليوم (1 أيام)."
+
   try:
     chat_info = bot.get_chat(channel_id)
     channel_title = chat_info.title or channel_id
@@ -709,7 +757,7 @@ def handle_attendance_click(call):
       (str(channel_id), channel_title, channel_title),
   )
 
-  points_earned = 10
+  points_earned = 10 + (min(current_streak, 5) * 2)
   cursor.execute(
       "INSERT INTO user_points (user_id, points) VALUES (?, ?) ON"
       " CONFLICT(user_id) DO UPDATE SET points = points + ?",
@@ -778,7 +826,7 @@ def handle_attendance_click(call):
   bot.answer_callback_query(
       call.id,
       f"✅ تم تسجيل حضورك بنجاح!\n➕ حصلت على {points_earned} نقاط ووسام: {b_icon}"
-      f" {b_name}",
+      f" {b_name}{streak_msg_extra}",
       show_alert=True,
   )
 
@@ -895,6 +943,12 @@ def show_profile_data(chat_id, user_id):
   rank = higher_users + 1
 
   cursor.execute(
+      "SELECT streak_count FROM user_profiles WHERE user_id = ?", (user_id,)
+  )
+  st_res = cursor.fetchone()
+  streak_count = st_res[0] if st_res and st_res[0] else 0
+
+  cursor.execute(
       "SELECT COUNT(*), SUM(is_correct) FROM question_answers WHERE user_id ="
       " ?",
       (user_id,),
@@ -902,9 +956,7 @@ def show_profile_data(chat_id, user_id):
   q_res = cursor.fetchone()
   total_q = q_res[0] if q_res and q_res[0] else 0
   correct_q = q_res[1] if q_res and q_res[1] else 0
-  accuracy = (
-      round((correct_q / total_q) * 100, 1) if total_q > 0 else 0.0
-  )
+  accuracy = round((correct_q / total_q) * 100, 1) if total_q > 0 else 0.0
 
   cursor.execute(
       "SELECT DISTINCT channel_title, channel_id FROM saved_channels WHERE"
@@ -928,8 +980,9 @@ def show_profile_data(chat_id, user_id):
       f"👤 <b>لوحة الملف الشخصي والإحصائيات الفردية:</b>\n\n🏅 <b>الوسام"
       f" والرتبة:</b>\n<blockquote>• الوسام الحالي: {badge_icon} <b>{badge_name}</b>\n•"
       f" رصيد النقاط: <code>{pts}</code> نقطة\n• الرتبة العالمية: المركز"
-      f" <code>{rank}</code></blockquote>\n\n📊 <b>سجل إجابات الأسئلة وتحديات"
-      f" السرعة:</b>\n<blockquote>• إجمالي الأسئلة المشارك بها:"
+      f" <code>{rank}</code>\n• 🔥 سلسلة الحضور المتتالية:"
+      f" <code>{streak_count}</code> أيام</blockquote>\n\n📊 <b>سجل إجابات الأسئلة"
+      f" وتحديات السرعة:</b>\n<blockquote>• إجمالي الأسئلة المشارك بها:"
       f" <code>{total_q}</code>\n• الإجابات الصحيحة:"
       f" <code>{correct_q}</code>\n• نسبة الدقة:"
       f" <code>{accuracy}%</code></blockquote>\n\n🌐 <b>القنوات والمجموعات"
@@ -1331,7 +1384,6 @@ def handle_menu_callbacks(call):
     conn = sqlite3.connect("roulette_bot.db", check_same_thread=False)
     cursor = conn.cursor()
 
-    # جلب أكثر القنوات حصولاً على الزوار مع فحص إعداد الخصوصية
     cursor.execute("""
             SELECT c.channel_title, c.visits_count, MAX(COALESCE(sc.show_on_leaderboard, 1)) as show_priv
             FROM channel_total_visits c
@@ -1342,7 +1394,6 @@ def handle_menu_callbacks(call):
         """)
     top_channels = cursor.fetchall()
 
-    # جلب أكثر المستخدمين جلباً للزوار مع فحص الخصوصية
     cursor.execute("""
             SELECT r.owner_id, r.visits_count, p.full_name, COALESCE(us.show_on_leaderboard, 1) as show_priv
             FROM referrals r 
@@ -1353,7 +1404,6 @@ def handle_menu_callbacks(call):
         """)
     top_users = cursor.fetchall()
 
-    # جلب أكثر الأعضاء تفاعلاً ونقاطاً مع فحص الخصوصية
     cursor.execute("""
             SELECT tp.user_id, tp.points, p.full_name, b.badge_icon, COALESCE(us.show_on_leaderboard, 1) as show_priv
             FROM user_points tp 
@@ -1368,7 +1418,6 @@ def handle_menu_callbacks(call):
 
     leaderboard_text = "🏆 <b>قوائم المتصدرين في البوت:</b>\n\n"
 
-    # قائمة أكثر القنوات زواراً
     leaderboard_text += "📢 <b>أكثر القنوات حصولاً على الزوار:</b>\n"
     if not top_channels:
       leaderboard_text += (
@@ -1388,7 +1437,6 @@ def handle_menu_callbacks(call):
         )
       leaderboard_text += "\n"
 
-    # قائمة أكثر المستخدمين جلباً للزوار
     leaderboard_text += "🔗 <b>أكثر المستخدمين جلباً للزوار:</b>\n"
     if not top_users:
       leaderboard_text += "<blockquote>• لا توجد بيانات حتى الآن..</blockquote>\n\n"
@@ -1406,7 +1454,6 @@ def handle_menu_callbacks(call):
         )
       leaderboard_text += "\n"
 
-    # قائمة أكثر الأعضاء تفاعلاً ونقاطاً
     leaderboard_text += "🌟 <b>أكثر الأعضاء تفاعلاً ونقاطاً والأوسمة:</b>\n"
     if not top_points:
       leaderboard_text += (
@@ -1471,7 +1518,6 @@ def handle_menu_callbacks(call):
     show_admin_panel(call.message.chat.id)
 
 
-# --- معالجات إعدادات الخصوصية والظهور في المتصدرين ---
 @bot.callback_query_handler(func=lambda call: call.data == "set_privacy_leaderboard")
 def callback_set_privacy_leaderboard(call):
   user_id = call.from_user.id
@@ -2810,59 +2856,15 @@ def send_weekly_report_to_admin():
       (two_weeks_ago_ts, week_ago_ts),
   )
   prev_week_attendance = cursor.fetchone()[0] or 0
-
-  if prev_week_attendance > 0:
-    growth_rate = round(
-        (
-            (current_week_attendance - prev_week_attendance)
-            / prev_week_attendance
-        )
-        * 100,
-        1,
-    )
-  else:
-    growth_rate = 100.0 if current_week_attendance > 0 else 0.0
-
-  growth_sign = "+" if growth_rate >= 0 else ""
-
-  cursor.execute("""
-        SELECT date_str, SUM(count) as total_cnt 
-        FROM channel_daily_attendance 
-        GROUP BY date_str 
-        ORDER BY total_cnt DESC 
-        LIMIT 1
-    """)
-  top_day_row = cursor.fetchone()
-  if top_day_row and top_day_row[0]:
-    days_trans = {
-        "Saturday": "السبت",
-        "Sunday": "الأحد",
-        "Monday": "الإثنين",
-        "Tuesday": "الثلاثاء",
-        "Wednesday": "الأربعاء",
-        "Thursday": "الخميس",
-        "Friday": "الجمعة",
-    }
-    try:
-      dt_obj = datetime.strptime(top_day_row[0], "%Y-%m-%d")
-      day_name_ar = days_trans.get(dt_obj.strftime("%A"), dt_obj.strftime("%A"))
-      top_day_str = (
-          f"{day_name_ar} ({top_day_row[0]}) - إجمالي التفاعلات:"
-          f" {top_day_row[1]}"
-      )
-    except Exception:
-      top_day_str = f"{top_day_row[0]} - التفاعلات: {top_day_row[1]}"
-  else:
-    top_day_str = "لا توجد بيانات كافية"
+  conn.close()
 
 
 if __name__ == "__main__":
-  try:
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
-    print("Webhook set successfully!")
-  except Exception as e:
-    print(f"Error setting webhook: {e}")
-
-  port = int(os.environ.get("PORT", 8080))
-  app.run(host="0.0.0.0", port=port)
+  # Start the Flask app in a separate background thread if webhook routing is desired alongside polling
+  threading.Thread(
+      target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False, use_reloader=False)
+  ).start()
+  
+  # Start infinity polling to listen for updates reliably
+  bot.remove_webhook()
+  bot.infinity_polling(skip_pending=True)
