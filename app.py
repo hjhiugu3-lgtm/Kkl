@@ -11,7 +11,7 @@ from flask import Flask, request
 import telebot
 from telebot import types
 
-TOKEN = "8682109455:AAHPGbqvIDjQtulfek5S1ujR-53CzrSthKs "
+TOKEN = "8682109455:AAHPGbqvIDjQtulfek5S1ujR-53CzrSthKs"
 WEBHOOK_URL = f"https://eeeeeee-production.up.railway.app/{TOKEN}"
 ADMIN_ID = 1250493517
 BOT_URL = "https://t.me/DaftarHQBot"
