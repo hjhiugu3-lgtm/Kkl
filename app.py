@@ -2827,7 +2827,7 @@ def admin_broadcast_prompt(call):
 def execute_admin_broadcast(message):
   user_states.pop(ADMIN_ID, None)
   broadcast_text = message.text
-  
+
   conn = sqlite3.connect("roulette_bot.db", check_same_thread=False)
   cursor = conn.cursor()
   cursor.execute("SELECT user_id FROM user_profiles")
@@ -2843,15 +2843,19 @@ def execute_admin_broadcast(message):
     try:
       bot.send_message(u_id, broadcast_text, parse_mode="HTML")
       success_count += 1
-      time.sleep(0.05) # لتجنب حظر تيليجرام (Flood Wait)
+      time.sleep(0.05)  # لتجنب حظر تيليجرام (Flood Wait)
     except Exception:
       fail_count += 1
 
   bot.edit_message_text(
       chat_id=message.chat.id,
       message_id=status_msg.message_id,
-      text=f"✅ <b>تم الانتهاء من الإرسال الجماعي!</b>\n\n• تم بنجاح: <code>{success_count}</code>\n• فشل (حظر البوت): <code>{fail_count}</code>",
-      parse_mode="HTML"
+      text=(
+          "✅ <b>تم الانتهاء من الإرسال الجماعي!</b>\n\n• تم بنجاح:"
+          f" <code>{success_count}</code>\n• فشل (حظر البوت):"
+          f" <code>{fail_count}</code>"
+      ),
+      parse_mode="HTML",
   )
 
 
@@ -2889,17 +2893,20 @@ def send_weekly_report_to_admin():
       (two_weeks_ago_ts, week_ago_ts),
   )
   prev_week_attendance = cursor.fetchone()[0] or 0
-  
-  cursor.execute("SELECT COUNT(*) FROM user_profiles WHERE joined_timestamp >= ?", (week_ago_ts,))
+
+  cursor.execute(
+      "SELECT COUNT(*) FROM user_profiles WHERE joined_timestamp >= ?",
+      (week_ago_ts,),
+  )
   new_users_week = cursor.fetchone()[0] or 0
 
   conn.close()
 
   report_text = (
-      f"📈 <b>التقرير الأسبوعي التحليلي للبوت:</b>\n\n"
-      f"• 👥 المستخدمون الجدد هذا الأسبوع: <code>{new_users_week}</code>\n"
-      f"• ✅ تفاعلات الحضور هذا الأسبوع: <code>{current_week_attendance}</code>\n"
-      f"• 📉 تفاعلات الحضور الأسبوع الماضي: <code>{prev_week_attendance}</code>"
+      f"📈 <b>التقرير الأسبوعي التحليلي للبوت:</b>\n\n• 👥 المستخدمون الجدد هذا"
+      f" الأسبوع: <code>{new_users_week}</code>\n• ✅ تفاعلات الحضور هذا الأسبوع:"
+      f" <code>{current_week_attendance}</code>\n• 📉 تفاعلات الحضور الأسبوع"
+      f" الماضي: <code>{prev_week_attendance}</code>"
   )
   try:
     bot.send_message(ADMIN_ID, report_text, parse_mode="HTML")
@@ -2908,11 +2915,7 @@ def send_weekly_report_to_admin():
 
 
 if __name__ == "__main__":
-  # Start the Flask app in a background thread to handle webhooks
   threading.Thread(
-      target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False, use_reloader=False)
+      target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
   ).start()
-  
-  # Remove webhook if polling is preferred or configure webhook properly depending on Railway
-  bot.remove_webhook()
-  bot.infinity_polling(skip_pending=True)
+  bot.infinity_polling()
