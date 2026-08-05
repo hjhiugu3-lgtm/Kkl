@@ -354,7 +354,7 @@ def send_subscription_required_message(chat_id):
   markup = types.InlineKeyboardMarkup(row_width=1)
   markup.add(
       create_colored_btn(
-          "📢 اشترك في القناة الآن",
+          " اشترك في القناة الآن",
           url=f"https://t.me/{channel_username.replace('@', '')}",
           style="primary",
       )
