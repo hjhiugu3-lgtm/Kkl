@@ -621,7 +621,6 @@ def callback_check_subscription(call):
     )
 
 
-# --- معالج زر تسجيل الحضور وتحديث سلسلة الحضور (Daily Streaks) تلقائياً ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("attend_"))
 def handle_attendance_click(call):
   user_id = call.from_user.id
@@ -712,7 +711,6 @@ def handle_attendance_click(call):
       (user_id, channel_id, today_str),
   )
 
-  # فحص وتحديث ميزة سلسلة الحضور (Daily Streaks)
   cursor.execute(
       "SELECT streak_count, last_attendance_date FROM user_profiles WHERE"
       " user_id = ?",
@@ -2822,6 +2820,41 @@ def admin_broadcast_prompt(call):
   )
 
 
+@bot.message_handler(
+    func=lambda message: message.from_user.id == ADMIN_ID
+    and user_states.get(ADMIN_ID) == "waiting_broadcast_msg"
+)
+def execute_admin_broadcast(message):
+  user_states.pop(ADMIN_ID, None)
+  broadcast_text = message.text
+  
+  conn = sqlite3.connect("roulette_bot.db", check_same_thread=False)
+  cursor = conn.cursor()
+  cursor.execute("SELECT user_id FROM user_profiles")
+  users = cursor.fetchall()
+  conn.close()
+
+  success_count = 0
+  fail_count = 0
+
+  status_msg = bot.reply_to(message, "⏳ جارٍ إرسال الرسالة الجماعية للمستخدمين...")
+
+  for (u_id,) in users:
+    try:
+      bot.send_message(u_id, broadcast_text, parse_mode="HTML")
+      success_count += 1
+      time.sleep(0.05) # لتجنب حظر تيليجرام (Flood Wait)
+    except Exception:
+      fail_count += 1
+
+  bot.edit_message_text(
+      chat_id=message.chat.id,
+      message_id=status_msg.message_id,
+      text=f"✅ <b>تم الانتهاء من الإرسال الجماعي!</b>\n\n• تم بنجاح: <code>{success_count}</code>\n• فشل (حظر البوت): <code>{fail_count}</code>",
+      parse_mode="HTML"
+  )
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "admin_send_weekly_report")
 def send_weekly_report_manual(call):
   if call.from_user.id != ADMIN_ID:
@@ -2856,15 +2889,30 @@ def send_weekly_report_to_admin():
       (two_weeks_ago_ts, week_ago_ts),
   )
   prev_week_attendance = cursor.fetchone()[0] or 0
+  
+  cursor.execute("SELECT COUNT(*) FROM user_profiles WHERE joined_timestamp >= ?", (week_ago_ts,))
+  new_users_week = cursor.fetchone()[0] or 0
+
   conn.close()
+
+  report_text = (
+      f"📈 <b>التقرير الأسبوعي التحليلي للبوت:</b>\n\n"
+      f"• 👥 المستخدمون الجدد هذا الأسبوع: <code>{new_users_week}</code>\n"
+      f"• ✅ تفاعلات الحضور هذا الأسبوع: <code>{current_week_attendance}</code>\n"
+      f"• 📉 تفاعلات الحضور الأسبوع الماضي: <code>{prev_week_attendance}</code>"
+  )
+  try:
+    bot.send_message(ADMIN_ID, report_text, parse_mode="HTML")
+  except Exception as e:
+    print(f"Failed to send weekly report: {e}")
 
 
 if __name__ == "__main__":
-  # Start the Flask app in a separate background thread if webhook routing is desired alongside polling
+  # Start the Flask app in a background thread to handle webhooks
   threading.Thread(
       target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False, use_reloader=False)
   ).start()
   
-  # Start infinity polling to listen for updates reliably
+  # Remove webhook if polling is preferred or configure webhook properly depending on Railway
   bot.remove_webhook()
-  # bot.infinity_polling(skip_pending=True)
+  bot.infinity_polling(skip_pending=True)
