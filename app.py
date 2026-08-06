@@ -2915,7 +2915,12 @@ def send_weekly_report_to_admin():
 
 
 if __name__ == "__main__":
-  threading.Thread(
-      target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-  ).start()
-  bot.infinity_polling()
+  # إزالة أي webhook قديم قبل تفعيل الجديد لتجنب التعارض
+  bot.remove_webhook()
+  time.sleep(1)
+  
+  # تفعيل Webhook للعمل على الاستضافة المذكورة
+  bot.set_webhook(url=WEBHOOK_URL)
+  
+  # تشغيل خادم Flask (تجاهل bot.infinity_polling لأنها تسبب تعارض مع Webhook)
+  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
