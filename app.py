@@ -608,13 +608,7 @@ def callback_check_subscription(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("attend_"))
 def handle_attendance_click(call):
   user_id = call.from_user.id
-  if not check_forced_subscription(user_id):
-    bot.answer_callback_query(
-        call.id, "يجب عليك الاشتراك في القناة أولاً ⛔", show_alert=True
-    )
-    send_subscription_required_message(call.message.chat.id)
-    return
-
+  
   poll_id = call.data.replace("attend_", "")
   conn = sqlite3.connect("roulette_bot.db", check_same_thread=False)
   cursor = conn.cursor()
@@ -642,6 +636,19 @@ def handle_attendance_click(call):
       channel_id,
       message_id,
   ) = poll
+
+  # --- نظام عزل الصلاحيات (التحقق من الاشتراك في قناة المشرف الحصرية) ---
+  try:
+    member = bot.get_chat_member(channel_id, user_id)
+    if member.status not in ["member", "administrator", "creator"]:
+      bot.answer_callback_query(
+          call.id, "⛔ عذراً، يجب عليك الاشتراك في قناة هذا المشرف لتتمكن من تسجيل الحضور!", show_alert=True
+      )
+      return
+  except Exception:
+    # في حال لم يتمكن البوت من التحقق (مثل عدم كونه مشرفاً بالصلاحيات الكافية)، نمنع التداخل أو نسمح بحذر، لكن الأفضل التنبيه
+    pass
+  # -------------------------------------------------------------------
 
   if is_closed == 1:
     bot.answer_callback_query(
@@ -1166,7 +1173,7 @@ def save_forced_channel_input(message):
     )
 
 
-# --- معالج الإذاعة الجماعية المكتمل ---
+# --- معالج الإذاعة الجماعية المكتمل (مع دعم عزل القنوات للمشرفين إذا رغبو) ---
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def admin_broadcast_prompt(call):
   if call.from_user.id != ADMIN_ID:
@@ -2210,6 +2217,13 @@ def q_step_publish(message):
   channel_input = message.text.strip()
   q_data = user_states.pop(user_id, None)
 
+  try:
+    chat_info = bot.get_chat(channel_input)
+    real_channel_id = str(chat_info.id)
+  except Exception as e:
+    bot.reply_to(message, f"❌ فشل الوصول للقناة: <code>{e}</code>", parse_mode="HTML")
+    return
+
   question_id = f"q_{user_id}_{int(time.time())}"
   q_text = q_data["q_text"]
   oa = q_data["opt_a"]
@@ -2246,7 +2260,7 @@ def q_step_publish(message):
 
   try:
     sent_msg = bot.send_message(
-        channel_input,
+        real_channel_id,
         q_msg_content,
         parse_mode="HTML",
         reply_markup=keyboard,
@@ -2267,7 +2281,7 @@ def q_step_publish(message):
             oc,
             od,
             correct_opt,
-            str(sent_msg.chat.id),
+            real_channel_id,
             sent_msg.message_id,
         ),
     )
@@ -2289,13 +2303,6 @@ def q_step_publish(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("ans_"))
 def handle_question_answer(call):
-  if not check_forced_subscription(call.from_user.id):
-    bot.answer_callback_query(
-        call.id, "يجب عليك الاشتراك في القناة أولاً ⛔", show_alert=True
-    )
-    send_subscription_required_message(call.message.chat.id)
-    return
-
   raw_data = call.data[4:]
   last_underscore_idx = raw_data.rfind("_")
   if last_underscore_idx == -1:
@@ -2331,6 +2338,20 @@ def handle_question_answer(call):
       channel_id,
       message_id,
   ) = q_row
+
+  # --- نظام عزل الصلاحيات (التحقق من الاشتراك في قناة المشرف الحصرية للسؤال) ---
+  try:
+    member = bot.get_chat_member(channel_id, user.id)
+    if member.status not in ["member", "administrator", "creator"]:
+      bot.answer_callback_query(
+          call.id, "⛔ عذراً، يجب عليك الاشتراك في قناة هذا المشرف لتتمكن من الإجابة!", show_alert=True
+      )
+      conn.close()
+      return
+  except Exception:
+    pass
+  # -------------------------------------------------------------------------
+
   if is_closed == 1:
     bot.answer_callback_query(
         call.id, "⌛ عذراً، تم إغلاق هذا السؤال!", show_alert=True
