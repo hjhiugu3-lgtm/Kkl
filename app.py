@@ -12,7 +12,10 @@ import telebot
 from telebot import types
 
 TOKEN = "8602756904:AAEI_n7qamsQGOx4zwkh89hj4d4uIw4tSkE"
-WEBHOOK_URL = f"https://eeeeeee-production.up.railway.app/{TOKEN}"
+
+# تم تحديث رابط الويب هوك بالرابط الجديد الخاص بك من المنصة
+WEBHOOK_URL = f"https://kkl-production-e29c.up.railway.app/{TOKEN}"
+
 ADMIN_ID = 1250493517
 BOT_URL = "https://t.me/DaftarHQBot"
 
