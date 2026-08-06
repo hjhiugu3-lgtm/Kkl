@@ -649,7 +649,6 @@ def handle_attendance_click(call):
       conn.close()
       return
   except Exception as e:
-    # إذا لم يتمكن البوت من التحقق (مثلاً ليس مشرفاً بالصلاحيات الكافية في القناة)، نترك تنبيهاً تقنياً ونسمح بحذر
     print(f"Channel membership check warning: {e}")
   # ----------------------------------------------------------------------------------------
 
