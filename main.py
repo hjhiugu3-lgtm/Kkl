@@ -19,6 +19,55 @@ BOT_URL = "https://t.me/DaftarHQBot"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") == "application/json":
+        json_string = request.get_data().decode("utf-8")
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "", 200
+    else:
+        return "Forbidden", 403
+
+def init_db():
+    conn = sqlite3.connect("roulette_bot.db", check_same_thread=False)
+    cursor = conn.cursor()
+    # إنشاء الجداول الأساسية
+    tables = [
+        """CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, title TEXT, custom_message TEXT, duration INTEGER DEFAULT 0, show_in_channel INTEGER DEFAULT 1, show_on_leaderboard INTEGER DEFAULT 1)""",
+        """CREATE TABLE IF NOT EXISTS user_profiles (user_id INTEGER PRIMARY KEY, full_name TEXT, username TEXT, joined_timestamp REAL DEFAULT 0, streak_count INTEGER DEFAULT 0, last_attendance_date TEXT)""",
+        """CREATE TABLE IF NOT EXISTS polls (poll_id TEXT PRIMARY KEY, owner_id INTEGER, count INTEGER, title TEXT, end_time REAL DEFAULT 0, is_closed INTEGER DEFAULT 0, show_in_channel INTEGER DEFAULT 1, channel_id TEXT, message_id INTEGER)""",
+        """CREATE TABLE IF NOT EXISTS poll_votes (poll_id TEXT, user_id INTEGER, user_name TEXT, username TEXT, vote_timestamp REAL DEFAULT 0, PRIMARY KEY (poll_id, user_id))""",
+        """CREATE TABLE IF NOT EXISTS channel_daily_attendance (user_id INTEGER, channel_id TEXT, date_str TEXT, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, channel_id, date_str))""",
+        """CREATE TABLE IF NOT EXISTS channel_daily_posts (channel_id TEXT, date_str TEXT, posts_count INTEGER DEFAULT 0, PRIMARY KEY (channel_id, date_str))""",
+        """CREATE TABLE IF NOT EXISTS saved_channels (user_id INTEGER, channel_id TEXT, channel_title TEXT, show_on_leaderboard INTEGER DEFAULT 1, PRIMARY KEY (user_id, channel_id))""",
+        """CREATE TABLE IF NOT EXISTS channel_total_visits (channel_id TEXT PRIMARY KEY, channel_title TEXT, visits_count INTEGER DEFAULT 0)""",
+        """CREATE TABLE IF NOT EXISTS authorized_question_creators (user_id INTEGER PRIMARY KEY)""",
+        """CREATE TABLE IF NOT EXISTS interactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, timestamp REAL)""",
+        """CREATE TABLE IF NOT EXISTS referrals (owner_id INTEGER PRIMARY KEY, visits_count INTEGER DEFAULT 0)""",
+        """CREATE TABLE IF NOT EXISTS user_referral_logs (owner_id INTEGER, visitor_id INTEGER, PRIMARY KEY (owner_id, visitor_id))""",
+        """CREATE TABLE IF NOT EXISTS user_points (user_id INTEGER PRIMARY KEY, points INTEGER DEFAULT 0)""",
+        """CREATE TABLE IF NOT EXISTS coupons (code TEXT PRIMARY KEY, points INTEGER, max_uses INTEGER, uses_count INTEGER DEFAULT 0, expires_at REAL, is_closed INTEGER DEFAULT 0)""",
+        """CREATE TABLE IF NOT EXISTS coupon_uses (code TEXT, user_id INTEGER, PRIMARY KEY (code, user_id))""",
+        """CREATE TABLE IF NOT EXISTS questions (question_id TEXT PRIMARY KEY, owner_id INTEGER, question_text TEXT, opt_a TEXT, opt_b TEXT, opt_c TEXT, opt_d TEXT, correct_opt TEXT, channel_id TEXT, message_id INTEGER, is_closed INTEGER DEFAULT 0)""",
+        """CREATE TABLE IF NOT EXISTS question_answers (question_id TEXT, user_id INTEGER, selected_option TEXT, is_correct INTEGER, earned_points INTEGER, PRIMARY KEY (question_id, user_id))""",
+        """CREATE TABLE IF NOT EXISTS user_badges (user_id INTEGER PRIMARY KEY, badge_name TEXT, badge_icon TEXT)""",
+        """CREATE TABLE IF NOT EXISTS scheduled_posts (sched_id TEXT PRIMARY KEY, user_id INTEGER, channel_id TEXT, post_type TEXT, title TEXT, content_data TEXT, run_time REAL)""",
+        """CREATE TABLE IF NOT EXISTS question_speed_race (question_id TEXT, user_id INTEGER, user_name TEXT, rank_pos INTEGER, PRIMARY KEY (question_id, user_id))""",
+        """CREATE TABLE IF NOT EXISTS system_settings (key TEXT PRIMARY KEY, value TEXT)"""
+    ]
+    for table in tables:
+        cursor.execute(table)
+    conn.commit()
+    conn.close()
+
+init_db()
+user_states = 
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+
 
 # مسار استقبال طلبات تيليجرام (Webhook)
 @app.route(f"/{TOKEN}", methods=["POST"])
