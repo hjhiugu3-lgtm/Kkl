@@ -608,8 +608,8 @@ def callback_check_subscription(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("attend_"))
 def handle_attendance_click(call):
   user_id = call.from_user.id
-  
   poll_id = call.data.replace("attend_", "")
+  
   conn = sqlite3.connect("roulette_bot.db", check_same_thread=False)
   cursor = conn.cursor()
 
@@ -637,18 +637,21 @@ def handle_attendance_click(call):
       message_id,
   ) = poll
 
-  # --- نظام عزل الصلاحيات (التحقق من الاشتراك في قناة المشرف الحصرية) ---
+  # --- [ميزة عزل الصلاحيات وحماية القنوات]: التحقق من اشتراك المستخدم في قناة المشرف الخاصة ---
   try:
     member = bot.get_chat_member(channel_id, user_id)
     if member.status not in ["member", "administrator", "creator"]:
       bot.answer_callback_query(
-          call.id, "⛔ عذراً، يجب عليك الاشتراك في قناة هذا المشرف لتتمكن من تسجيل الحضور!", show_alert=True
+          call.id, 
+          "⛔ عذراً، يجب عليك الاشتراك في قناة هذا المشرف لتتمكن من تسجيل الحضور!", 
+          show_alert=True
       )
+      conn.close()
       return
-  except Exception:
-    # في حال لم يتمكن البوت من التحقق (مثل عدم كونه مشرفاً بالصلاحيات الكافية)، نمنع التداخل أو نسمح بحذر، لكن الأفضل التنبيه
-    pass
-  # -------------------------------------------------------------------
+  except Exception as e:
+    # إذا لم يتمكن البوت من التحقق (مثلاً ليس مشرفاً بالصلاحيات الكافية في القناة)، نترك تنبيهاً تقنياً ونسمح بحذر
+    print(f"Channel membership check warning: {e}")
+  # ----------------------------------------------------------------------------------------
 
   if is_closed == 1:
     bot.answer_callback_query(
@@ -1173,7 +1176,6 @@ def save_forced_channel_input(message):
     )
 
 
-# --- معالج الإذاعة الجماعية المكتمل (مع دعم عزل القنوات للمشرفين إذا رغبو) ---
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def admin_broadcast_prompt(call):
   if call.from_user.id != ADMIN_ID:
@@ -1209,7 +1211,7 @@ def execute_broadcast(message):
     try:
       bot.send_message(uid, broadcast_text, parse_mode="HTML")
       sent_count += 1
-      time.sleep(0.05)  # لتجنب حظر التليجرام
+      time.sleep(0.05)
     except Exception:
       failed_count += 1
 
@@ -2339,18 +2341,20 @@ def handle_question_answer(call):
       message_id,
   ) = q_row
 
-  # --- نظام عزل الصلاحيات (التحقق من الاشتراك في قناة المشرف الحصرية للسؤال) ---
+  # --- [ميزة عزل الصلاحيات وحماية القنوات]: التحقق من اشتراك المستخدم في قناة المشرف الخاصة بالسؤال ---
   try:
     member = bot.get_chat_member(channel_id, user.id)
     if member.status not in ["member", "administrator", "creator"]:
       bot.answer_callback_query(
-          call.id, "⛔ عذراً، يجب عليك الاشتراك في قناة هذا المشرف لتتمكن من الإجابة!", show_alert=True
+          call.id, 
+          "⛔ عذراً، يجب عليك الاشتراك في قناة هذا المشرف لتتمكن من الإجابة!", 
+          show_alert=True
       )
       conn.close()
       return
-  except Exception:
-    pass
-  # -------------------------------------------------------------------------
+  except Exception as e:
+    print(f"Question channel membership check warning: {e}")
+  # ----------------------------------------------------------------------------------------------
 
   if is_closed == 1:
     bot.answer_callback_query(
@@ -2892,9 +2896,6 @@ if __name__ == "__main__":
   try:
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
-    print("Webhook set successfully!")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
   except Exception as e:
-    print(f"Error setting webhook: {e}")
-
-  port = int(os.environ.get("PORT", 8080))
-  app.run(host="0.0.0.0", port=port)
+    print(f"Server error: {e}")
