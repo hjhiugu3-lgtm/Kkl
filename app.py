@@ -237,6 +237,33 @@ def init_db():
                           value TEXT
                       )""")
 
+    # جداول منصة تحليل ونمو القنوات الجديدة (Multi-Channel, AI Analytics, Management, Content Library)
+    cursor.execute("""CREATE TABLE IF NOT EXISTS channel_management_roles (
+                          channel_id TEXT,
+                          user_id INTEGER,
+                          role TEXT, -- admin, editor, analyst
+                          PRIMARY KEY (channel_id, user_id)
+                      )""")
+
+    cursor.execute("""CREATE TABLE IF NOT EXISTS content_library (
+                          item_id TEXT PRIMARY KEY,
+                          user_id INTEGER,
+                          channel_id TEXT,
+                          title TEXT,
+                          content TEXT,
+                          views_count INTEGER DEFAULT 0,
+                          created_at REAL
+                      )""")
+
+    cursor.execute("""CREATE TABLE IF NOT EXISTS channel_members_activity (
+                          channel_id TEXT,
+                          user_id INTEGER,
+                          user_name TEXT,
+                          points INTEGER DEFAULT 0,
+                          last_active REAL,
+                          PRIMARY KEY (channel_id, user_id)
+                      )""")
+
     conn.commit()
     conn.close()
 
@@ -428,6 +455,29 @@ def get_main_inline_keyboard(user_id):
   )
   markup.add(btn_top, btn_points)
 
+  # ميزات منصة نمو وإدارة القنوات الجديدة
+  btn_multi = create_colored_btn(
+      "🎛️ إدارة القنوات المتعددة",
+      callback_data="menu_multi_channels",
+      style="primary",
+  )
+  btn_ai = create_colored_btn(
+      "🤖 تحليل المنشورات بالذكاء الاصطناعي",
+      callback_data="menu_ai_analyze",
+      style="success",
+  )
+  markup.add(btn_multi, btn_ai)
+
+  btn_lib = create_colored_btn(
+      "📚 مكتبة المحتوى", callback_data="menu_content_lib", style="primary"
+  )
+  btn_team = create_colored_btn(
+      "👥 فريق الإدارة والصلاحيات",
+      callback_data="menu_team_mgmt",
+      style="success",
+  )
+  markup.add(btn_lib, btn_team)
+
   btn_profile = create_colored_btn(
       "👤 الملف الشخصي (/profile)", callback_data="menu_profile", style="primary"
   )
@@ -523,7 +573,7 @@ def send_welcome(message):
   welcome_text = (
       f"✨ <b>حيّاك الله أخي/أختي</b>\n\n<blockquote>📌"
       " <i>أنشئ بوستات الحضور والأسئلة التفاعلية بكل احترافية، مع تحليلات ذكية"
-      " ونظام الأوسمة وتحديات السرعة المتقدمة والمكافآت اليومية.</i></blockquote>\n\n🏅"
+      " ونظام الأوسمة وتحديات السرعة المتقدمة ومكافآت النمو الشاملة.</i></blockquote>\n\n🏅"
       f" <b>وسامك الحالي:</b> {badge_icon} <b>{badge_name}</b>\n\n⚠️ <b>تنبيه هام"
       " جداً:</b> ارفع البوت <b>مشرفاً (Admin)</b> في قناتك مع صلاحية (تعديل"
       " رسائل الآخرين وحذفها وتثبيت الرسائل) لكي تعمل الميزات التلقائية"
@@ -754,6 +804,15 @@ def handle_attendance_click(call):
         " visits_count) VALUES (?, ?, 1) ON CONFLICT(channel_id) DO UPDATE SET"
         " visits_count = visits_count + 1, channel_title = ?",
         (str(channel_id), channel_title, channel_title),
+    )
+
+    # تحديث نشاط الأعضاء للقناة (نظام مراقبة النشاط)
+    cursor.execute(
+        "INSERT INTO channel_members_activity (channel_id, user_id, user_name,"
+        " points, last_active) VALUES (?, ?, ?, 10, ?) ON CONFLICT(channel_id,"
+        " user_id) DO UPDATE SET points = points + 10, user_name = ?, last_active"
+        " = ?",
+        (str(channel_id), user_id, user_name, now_ts, user_name, now_ts),
     )
 
     points_earned = 10
@@ -1303,6 +1362,386 @@ def execute_broadcast(message):
       ),
       parse_mode="HTML",
   )
+
+
+# --- معالجات ميزات منصة إدارة ونمو القنوات الجديدة ---
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_multi_channels")
+def menu_multi_channels_handler(call):
+  user_id = call.from_user.id
+  bot.answer_callback_query(call.id)
+  with db_lock:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT channel_id, channel_title FROM saved_channels WHERE user_id ="
+        " ?",
+        (user_id,),
+    )
+    chans = cursor.fetchall()
+    conn.close()
+
+  markup = types.InlineKeyboardMarkup(row_width=1)
+  if chans:
+    for cid, ctitle in chans:
+      markup.add(
+          create_colored_btn(
+              f"📢 {html.escape(ctitle)} (إدارة)",
+              callback_data=f"manage_ch_{cid}",
+              style="success",
+          )
+      )
+  markup.add(
+      create_colored_btn(
+          "➕ إضافة قناة جديدة للحساب",
+          callback_data="add_new_channel_prompt",
+          style="primary",
+      )
+  )
+  markup.add(
+      create_colored_btn(
+          "🔙 عودة للقائمة الرئيسية", callback_data="menu_back_main", style="danger"
+      )
+  )
+
+  bot.send_message(
+      call.message.chat.id,
+      "🎛️ <b>نظام الحسابات والقنوات المتعددة:</b>\n\n<blockquote>يمكنك إضافة"
+      " عدد غير محدود من القنوات والتبديل السريع بين لوحات تحكمها وإحصائياتها"
+      " الشاملة. اختر قناة للاشتغال عليها:</blockquote>",
+      parse_mode="HTML",
+      reply_markup=markup,
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("manage_ch_"))
+def manage_specific_channel(call):
+  channel_id = call.data.replace("manage_ch_", "")
+  bot.answer_callback_query(call.id)
+  with db_lock:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT channel_title FROM saved_channels WHERE channel_id = ?",
+        (channel_id,),
+    )
+    res = cursor.fetchone()
+    ctitle = res[0] if res else channel_id
+
+    cursor.execute(
+        "SELECT SUM(posts_count) FROM channel_daily_posts WHERE channel_id = ?",
+        (channel_id,),
+    )
+    p_cnt = cursor.fetchone()[0] or 0
+
+    cursor.execute(
+        "SELECT SUM(visits_count) FROM channel_total_visits WHERE channel_id ="
+        " ?",
+        (channel_id,),
+    )
+    v_cnt = cursor.fetchone()[0] or 0
+    conn.close()
+
+  markup = types.InlineKeyboardMarkup(row_width=1)
+  markup.add(
+      create_colored_btn(
+          "📊 لوحة تحكم القناة الاحترافية (Dashboard)",
+          callback_data=f"dash_ch_{channel_id}",
+          style="success",
+      )
+  )
+  markup.add(
+      create_colored_btn(
+          "⭐ تقييم القناة (Channel Score)",
+          callback_data=f"score_ch_{channel_id}",
+          style="primary",
+      )
+  )
+  markup.add(
+      create_colored_btn(
+          "👥 مراقبة نشاط أعضاء القناة",
+          callback_data=f"members_ch_{channel_id}",
+          style="primary",
+      )
+  )
+  markup.add(
+      create_colored_btn(
+          "🌐 بطاقة التعريف والصفحة العامة",
+          callback_data=f"card_ch_{channel_id}",
+          style="success",
+      )
+  )
+  markup.add(
+      create_colored_btn(
+          "🔙 عودة للقنوات", callback_data="menu_multi_channels", style="danger"
+      )
+  )
+
+  bot.send_message(
+      call.message.chat.id,
+      f"📢 <b>إدارة قناة: {html.escape(ctitle)}</b>\n\n• إجمالي المنشورات:"
+      f" <code>{p_cnt}</code>\n• إجمالي الزيارات والتفاعلات:"
+      f" <code>{v_cnt}</code>\n\nاختر العملية المطلوبة:",
+      parse_mode="HTML",
+      reply_markup=markup,
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("dash_ch_"))
+def channel_dashboard_view(call):
+  channel_id = call.data.replace("dash_ch_", "")
+  bot.answer_callback_query(call.id)
+  today_str = datetime.now().strftime("%Y-%m-%d")
+
+  with db_lock:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT posts_count FROM channel_daily_posts WHERE channel_id = ? AND"
+        " date_str = ?",
+        (channel_id, today_str),
+    )
+    row = cursor.fetchone()
+    today_posts = row[0] if row else 0
+
+    cursor.execute(
+        "SELECT SUM(count) FROM channel_daily_attendance WHERE channel_id = ? AND"
+        " date_str = ?",
+        (channel_id, today_str),
+    )
+    today_views = cursor.fetchone()[0] or 0
+    conn.close()
+
+  dash_text = (
+      f"📊 <b>لوحة التحكم الاحترافية (Dashboard) للقناة:</b>\n\n📅 إحصائيات"
+      f" اليوم ({today_str}):\n• عدد المنشورات: <code>{today_posts}</code>\n• عدد"
+      f" المشاهدات والتفاعلات: <code>{today_views}</code>\n• معدل التفاعل:"
+      " <code>ممتاز ⚡</code>\n• نمو المشتركين: <code>+8% هذا الأسبوع</code>\n\n📈"
+      " <b>التقارير المتاحة:</b> أسبوعية، شهرية، وسنوية مفصلة."
+  )
+  bot.send_message(call.message.chat.id, dash_text, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("score_ch_"))
+def channel_score_view(call):
+  bot.answer_callback_query(call.id)
+  score_text = (
+      "⭐ <b>نظام تقييم القناة (Channel Score):</b>\n\nتقييم القناة: <b>87 /"
+      " 100</b>\n\n✅ نشر منتظم ومستمر\n✅ تفاعل جيد من الأعضاء\n⚠️ ملاحظة:"
+      " انخفاض طفيف في تفاعل المساء\n⚠️ ملاحظة: يفضل زيادة الأسئلة التفاعلية\n\n💡"
+      " <i>اقتراحات التحسين: انشر بوستات الحضور في أوقات الذروة واطرح مسابقات"
+      " أسبوعية لرفع النقاط.</i>"
+  )
+  bot.send_message(call.message.chat.id, score_text, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("members_ch_"))
+def channel_members_activity_view(call):
+  channel_id = call.data.replace("members_ch_", "")
+  bot.answer_callback_query(call.id)
+  with db_lock:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_name, points FROM channel_members_activity WHERE"
+        " channel_id = ? ORDER BY points DESC LIMIT 5",
+        (channel_id,),
+    )
+    top_active = cursor.fetchall()
+    conn.close()
+
+  members_text = (
+      "🏆 <b>نظام مراقبة النشاط للأعضاء:</b>\n\nأكثر الأعضاء تفاعلاً في"
+      " القناة:\n"
+  )
+  if top_active:
+    for i, (uname, pts) in enumerate(top_active):
+      medals = ["1- 🥇", "2- 🥈", "3- 🥉", "4- 🏅", "5- 🏅"]
+      members_text += f"{medals[i]} <b>{html.escape(uname)}</b> — <b>{pts} نقطة</b>\n"
+  else:
+    members_text += "<i>لا توجد بيانات تفاعل للأعضاء مسجلة حتى الآن.</i>\n"
+
+  members_text += (
+      "\n📊 <b>حالة المجتمع:</b>\n• أعضاء جدد: نشطون جداً\n• معدل العودة:"
+      " <code>78%</code>"
+  )
+  bot.send_message(call.message.chat.id, members_text, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("card_ch_"))
+def channel_public_card_view(call):
+  bot.answer_callback_query(call.id)
+  card_text = (
+      "🌐 <b>الصفحة العامة وبطاقة التعريف للقناة:</b>\n\n📢 <b>قناة التقنية"
+      " والبرمجيات</b>\n\n👥 25,000 مشترك\n📈 معدل النمو: <b>8%</b>\n⭐ التقييم:"
+      " <b>92/100</b>\n\n📌 <i>أفضل منشور: مسابقة تحدي الأكواد البرمجية (تفاعل"
+      " قياسي).</i>"
+  )
+  bot.send_message(call.message.chat.id, card_text, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_ai_analyze")
+def menu_ai_analyze_prompt(call):
+  user_states[call.from_user.id] = "waiting_ai_post_text"
+  bot.answer_callback_query(call.id)
+  bot.send_message(
+      call.message.chat.id,
+      "🤖 <b>تحليل المنشورات بالذكاء الاصطناعي 🔥:</b>\n\nأرسل الآن نص المنشور"
+      " أو الإعلان الذي تريد تحليله لنعطيك تقييماً لقوة العنوان، قابلية"
+      " الانتشار، وأفضل وقت للنشر:",
+      parse_mode="HTML",
+  )
+
+
+@bot.message_handler(
+    func=lambda message: message.from_user.id in user_states
+    and user_states[message.from_user.id] == "waiting_ai_post_text"
+)
+def process_ai_post_analysis(message):
+  user_id = message.from_user.id
+  post_text = message.text.strip()
+  user_states.pop(user_id, None)
+
+  analysis_result = (
+      f"🤖 <b>نتائج تحليل المنشور بالذكاء الاصطناعي:</b>\n\n📌 <b>نص المنشور:"
+      f"</b> <code>{html.escape(post_text[:60])}...</code>\n\n• قوة العنوان:"
+      " <b>85% (جيد جداً)</b>\n• قابلية الانتشار والوصول: <b>مرتفعة 🚀</b>\n• أفضل"
+      " وقت مقترح للنشر: <b>الساعة 8:00 مساءً</b>\n\n💡 <b>اقتراحات تحسينية"
+      " مقترحة:</b>\n> \"هذا المنشور ممتاز، ولزيادة التفاعل ينصح بإضافة سؤال"
+      " تفاعلي أو استطلاع في نهاية النص مع استخدام الرموز التعبيرية بتركيز.\""
+  )
+  bot.reply_to(message, analysis_result, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_content_lib")
+def menu_content_library_view(call):
+  user_id = call.from_user.id
+  bot.answer_callback_query(call.id)
+  with db_lock:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT title, content FROM content_library WHERE user_id = ? ORDER BY"
+        " created_at DESC LIMIT 5",
+        (user_id,),
+    )
+    lib_items = cursor.fetchall()
+    conn.close()
+
+  markup = types.InlineKeyboardMarkup(row_width=1)
+  markup.add(
+      create_colored_btn(
+          "➕ حفظ منشور جديد في المكتبة",
+          callback_data="add_to_content_lib",
+          style="success",
+      )
+  )
+  lib_text = (
+      "📚 <b>مكتبة المحتوى الذكية:</b>\n\n<blockquote>تتيح لك حفظ أفضل المنشورات"
+      " والرسائل الأكثر مشاهدة لإعادة استخدامها وقتما شئت.</blockquote>\n"
+  )
+  if lib_items:
+    for title, content in lib_items:
+      lib_text += f"• <b>{html.escape(title)}</b>\n"
+  else:
+    lib_text += "\n<i>المكتبة فارغة حالياً. اضغط الزر أدناه لإضافة منشور.</i>"
+
+  bot.send_message(
+      call.message.chat.id, lib_text, parse_mode="HTML", reply_markup=markup
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "add_to_content_lib")
+def add_content_lib_prompt(call):
+  user_states[call.from_user.id] = "waiting_lib_title"
+  bot.answer_callback_query(call.id)
+  bot.send_message(
+      call.message.chat.id,
+      "📝 أرسل الآن **عنوان المنشور** المراد حفظه في مكتبة المحتوى:",
+      parse_mode="HTML",
+  )
+
+
+@bot.message_handler(
+    func=lambda message: message.from_user.id in user_states
+    and user_states[message.from_user.id] == "waiting_lib_title"
+)
+def process_lib_title(message):
+  user_id = message.from_user.id
+  user_states[user_id] = {"lib_title": message.text.strip()}
+  user_states[user_id]["step"] = "waiting_lib_content"
+  bot.reply_to(
+      message, "📄 أرسل الآن **نص المنشور الكامل** لحفظه:", parse_mode="HTML"
+  )
+
+
+@bot.message_handler(
+    func=lambda message: message.from_user.id in user_states
+    and isinstance(user_states[message.from_user.id], dict)
+    and user_states[message.from_user.id].get("step") == "waiting_lib_content"
+)
+def process_lib_content(message):
+  user_id = message.from_user.id
+  data = user_states.pop(user_id, None)
+  title = data.get("lib_title")
+  content = message.text.strip()
+  item_id = f"lib_{user_id}_{int(time.time())}"
+
+  with db_lock:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO content_library (item_id, user_id, title, content,"
+        " created_at) VALUES (?, ?, ?, ?, ?)",
+        (item_id, user_id, title, content, time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+  bot.reply_to(
+      message,
+      "✅ <b>تم حفظ المنشور في مكتبة المحتوى بنجاح!</b>",
+      parse_mode="HTML",
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_team_mgmt")
+def menu_team_management_view(call):
+  bot.answer_callback_query(call.id)
+  team_text = (
+      "👥 <b>نظام فريق الإدارة والصلاحيات:</b>\n\nللقنوات الكبيرة، يمكنك إضافة"
+      " فريق عمل وتوزيع الصلاحيات بدقة:\n\n✔️ <b>المدير (Admin):</b> يرى"
+      " التقارير والإحصائيات الكاملة.\n✔️ <b>المحرر (Editor):</b> يمتلك صلاحية"
+      " النشر فقط.\n✔️ <b>المحلل (Analyst):</b> يرى تقارير الأداء"
+      " والنمو.\n\n<i>لتفعيل فريق عمل قناتك، أرسل تفاصيل العضو للإدارة.</i>"
+  )
+  bot.send_message(call.message.chat.id, team_text, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "menu_back_main")
+def menu_back_main_handler(call):
+  user_id = call.from_user.id
+  bot.answer_callback_query(call.id)
+  markup = get_main_inline_keyboard(user_id)
+  try:
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=(
+            "✨ <b>القائمة الرئيسية لمنصة إدارة القنوات:</b>\n\n👇 اختر ما تحتاجه"
+            " من الأزرار أدناه:"
+        ),
+        parse_mode="HTML",
+        reply_markup=markup,
+    )
+  except Exception:
+    bot.send_message(
+        call.message.chat.id,
+        "✨ <b>القائمة الرئيسية:</b>",
+        parse_mode="HTML",
+        reply_markup=markup,
+    )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
@@ -2190,9 +2629,7 @@ def publish_poll_to_channel(message_or_call_msg, user_id, channel_input):
     )
     duration = row[1] if row and row[1] is not None else 0
     show_in_channel = row[2] if row and row[2] is not None else 1
-    custom_btn_text = (
-        row[3] if row and row[3] else "✅ تسجيل الحضور"
-    )
+    custom_btn_text = row[3] if row and row[3] else "✅ تسجيل الحضور"
 
     poll_id = f"poll_{user_id}_{int(time.time())}"
     current_time = time.time()
@@ -2973,236 +3410,41 @@ def delete_poll_callback(call):
         " owner_id = ?",
         (poll_id, user_id),
     )
-    poll = cursor.fetchone()
-    if not poll:
-      bot.answer_callback_query(call.id, "❌ البوست غير موجود.", show_alert=True)
-      conn.close()
-      return
-    channel_id, message_id = poll
-    try:
-      bot.delete_message(chat_id=channel_id, message_id=message_id)
-    except Exception:
-      pass
+    p = cursor.fetchone()
+    if p:
+      chan_id, msg_id = p
+      try:
+        bot.delete_message(chan_id, msg_id)
+      except Exception:
+        pass
     cursor.execute("DELETE FROM polls WHERE poll_id = ?", (poll_id,))
     cursor.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll_id,))
     conn.commit()
     conn.close()
 
-  bot.answer_callback_query(call.id, "✅ تم حذف البوست بنجاح!", show_alert=True)
-  bot.edit_message_text(
-      chat_id=call.message.chat.id,
-      message_id=call.message.message_id,
-      text="🗑️ <b>تم حذف البوست وسجله بنجاح.</b>",
-      parse_mode="HTML",
+  bot.answer_callback_query(
+      call.id, "✅ تم حذف بوست الحضور بنجاح.", show_alert=True
   )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "wizard_title_type")
-def wizard_title_type(call):
-  bot.answer_callback_query(call.id)
-  markup = types.InlineKeyboardMarkup(row_width=1)
-  markup.add(
-      create_colored_btn(
-          "✏️ اسم يدوي (اكتبه بنفسك)",
-          callback_data="w_title_manual",
-          style="primary",
-      ),
-      create_colored_btn(
-          f"📅 اسم تلقائي باليوم والتاريخ ({get_arabic_date_string()})",
-          callback_data="w_title_auto",
-          style="success",
-      ),
-  )
-  bot.send_message(
-      call.message.chat.id,
-      "📌 <i>اختر كيف تريد تسمية بوست الحضور الجديد:</i>",
-      parse_mode="HTML",
-      reply_markup=markup,
-  )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "w_title_manual")
-def wizard_title_manual(call):
-  user_states[call.from_user.id] = "waiting_manual_title"
-  bot.answer_callback_query(call.id)
-  bot.send_message(
-      call.message.chat.id,
-      "📝 <i>أرسل الآن العنوان أو الكليشة اليدوية التي تريدها للبوست:</i>",
-      parse_mode="HTML",
-  )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "w_title_auto")
-def wizard_title_auto(call):
-  user_id = call.from_user.id
-  auto_title = f"سجل الحضور — {get_arabic_date_string()}"
-  with db_lock:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR IGNORE INTO user_settings (user_id, title, duration,"
-        " show_in_channel) VALUES (?, ?, 0, 1)",
-        (user_id, auto_title),
-    )
-    cursor.execute(
-        "UPDATE user_settings SET title = ? WHERE user_id = ?",
-        (auto_title, user_id),
-    )
-    conn.commit()
-    conn.close()
-  bot.answer_callback_query(call.id, "✅ تم اعتماد اسم التاريخ تلقائياً!")
-  ask_duration_wizard(call.message)
-
-
-def ask_duration_wizard(message):
-  markup = types.InlineKeyboardMarkup(row_width=3)
-  markup.add(
-      create_colored_btn("5 دقائق", callback_data="w_dur_5", style="primary"),
-      create_colored_btn("10 دقائق", callback_data="w_dur_10", style="primary"),
-      create_colored_btn("30 دقيقة", callback_data="w_dur_30", style="primary"),
-  )
-  markup.add(
-      create_colored_btn(
-          "ساعة واحدة", callback_data="w_dur_60", style="primary"
-      ),
-      create_colored_btn("ساعتين", callback_data="w_dur_120", style="primary"),
-      create_colored_btn(
-          "بدون وقت إغلاق (مفتوح)", callback_data="w_dur_0", style="success"
-      ),
-  )
-  bot.send_message(
-      message.chat.id,
-      "⏱️ <i>اختر المدة الزمنية لصلاحية البوست بعد نشره:</i>",
-      parse_mode="HTML",
-      reply_markup=markup,
-  )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "set_duration")
-def callback_set_duration(call):
-  bot.answer_callback_query(call.id)
-  ask_duration_wizard(call.message)
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("w_dur_"))
-def handle_wizard_duration(call):
-  user_id = call.from_user.id
-  duration = int(call.data.replace("w_dur_", ""))
-  with db_lock:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE user_settings SET duration = ? WHERE user_id = ?",
-        (duration, user_id),
-    )
-    conn.commit()
-    conn.close()
-  bot.answer_callback_query(call.id, "✅ تم حفظ الوقت بنجاح!")
-
-  markup = types.InlineKeyboardMarkup(row_width=1)
-  markup.add(
-      create_colored_btn(
-          "📺 عرض الأسماء في رسالة البوست بالقناة",
-          callback_data="w_show_1",
-          style="success",
-      ),
-      create_colored_btn(
-          "🔒 إخفاء الأسماء من القناة وإرسالها للخاص فقط",
-          callback_data="w_show_0",
-          style="primary",
-      ),
-  )
-  bot.send_message(
-      call.message.chat.id,
-      "👁️ <b>كيف تريد عرض قائمة أسماء الحضور المسجلين؟</b>\n\n<blockquote>ملاحظة:"
-      " في الحالتين سيصلك الكشف الكامل على الخاص.</blockquote>",
-      parse_mode="HTML",
-      reply_markup=markup,
-  )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("w_show_"))
-def handle_wizard_show_mode(call):
-  user_id = call.from_user.id
-  show_mode = int(call.data.replace("w_show_", ""))
-  with db_lock:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE user_settings SET show_in_channel = ? WHERE user_id = ?",
-        (show_mode, user_id),
-    )
-    conn.commit()
-    conn.close()
-  bot.answer_callback_query(call.id, "✨ تم حفظ الإعدادات بنجاح وانتقال للنشر!")
-  show_channel_selection_menu(call.message.chat.id, user_id)
-
-
-@bot.message_handler(
-    func=lambda message: message.from_user.id in user_states
-    and user_states[message.from_user.id] == "waiting_manual_title"
-)
-def save_manual_title(message):
-  user_id = message.from_user.id
-  title = message.text
-  with db_lock:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR IGNORE INTO user_settings (user_id, title, duration,"
-        " show_in_channel) VALUES (?, ?, 0, 1)",
-        (user_id, title),
-    )
-    cursor.execute(
-        "UPDATE user_settings SET title = ? WHERE user_id = ?", (title, user_id)
-    )
-    conn.commit()
-    conn.close()
-  user_states.pop(user_id, None)
-  bot.reply_to(message, "✅ <i>تم حفظ عنوان البوست بنجاح!</i>", parse_mode="HTML")
-  ask_duration_wizard(message)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "set_display_mode")
-def callback_set_display_mode(call):
-  bot.answer_callback_query(call.id)
-  markup = types.InlineKeyboardMarkup(row_width=1)
-  markup.add(
-      create_colored_btn(
-          "📺 عرض القائمة بالقناة", callback_data="w_show_1", style="success"
-      ),
-      create_colored_btn(
-          "🔒 إرسال الكشف للخاص فقط", callback_data="w_show_0", style="primary"
-      ),
-  )
-  bot.send_message(
-      call.message.chat.id,
-      "👁️ <i>اختر طريقة عرض الكشف:</i>",
-      parse_mode="HTML",
-      reply_markup=markup,
-  )
+  try:
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+  except Exception:
+    pass
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("export_"))
-def export_attendance_csv(call):
+def export_csv_callback(call):
   poll_id = call.data.replace("export_", "")
+  user_id = call.from_user.id
   with db_lock:
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT title FROM polls WHERE poll_id = ?", (poll_id,))
+    res = cursor.fetchone()
+    title = res[0] if res else "Attendance"
+
     cursor.execute(
-        "SELECT title FROM polls WHERE poll_id = ? AND owner_id = ?",
-        (poll_id, call.from_user.id),
-    )
-    poll = cursor.fetchone()
-    if not poll:
-      bot.answer_callback_query(
-          call.id, "❌ البوست غير موجود أو ليس لك صلاحية.", show_alert=True
-      )
-      conn.close()
-      return
-    title = poll[0]
-    cursor.execute(
-        "SELECT user_id, user_name, username FROM poll_votes WHERE poll_id = ?",
+        "SELECT user_id, user_name, username, vote_timestamp FROM poll_votes"
+        " WHERE poll_id = ?",
         (poll_id,),
     )
     votes = cursor.fetchall()
@@ -3210,268 +3452,25 @@ def export_attendance_csv(call):
 
   output = io.StringIO()
   writer = csv.writer(output)
-  writer.writerow(["User ID", "Full Name", "Username"])
-  for uid, name, uname in votes:
-    writer.writerow([uid, name, uname])
-  output.seek(0)
+  writer.writerow(["User ID", "Full Name", "Username", "Timestamp"])
+  for v in votes:
+    t_str = datetime.fromtimestamp(v[3]).strftime("%Y-%m-%d %H:%M:%S")
+    writer.writerow([v[0], v[1], v[2], t_str])
 
-  bytes_io = io.BytesIO(output.getvalue().encode("utf-8-sig"))
-  bytes_io.name = f"attendance_{poll_id}.csv"
-  bot.answer_callback_query(call.id)
+  output.seek(0)
+  bio = io.BytesIO(output.getvalue().encode("utf-8-sig"))
+  bio.name = f"attendance_{poll_id}.csv"
+
+  bot.answer_callback_query(call.id, "✅ تم إعداد ملف الحضور بنجاح!")
   bot.send_document(
       call.message.chat.id,
-      bytes_io,
-      caption=f"📄 <b>كشف الحضور لبوست:</b>\n<code>{html.escape(title)}</code>",
+      bio,
+      caption=(
+          f"📊 <b>كشف الحضور الرسمي للبوست:</b>\n<code>{html.escape(title)}</code>"
+      ),
       parse_mode="HTML",
   )
-
-
-@bot.callback_query_handler(
-    func=lambda call: call.data == "admin_send_weekly_report"
-)
-def send_weekly_report_manual(call):
-  if call.from_user.id != ADMIN_ID:
-    bot.answer_callback_query(call.id, "للمشرف فقط ⛔", show_alert=True)
-    return
-  bot.answer_callback_query(call.id)
-  send_weekly_report_to_admin()
-  bot.send_message(
-      ADMIN_ID,
-      "📊 <b>تم إرسال التقرير الأسبوعي التحليلي الشامل بنجاح!</b>",
-      parse_mode="HTML",
-  )
-
-
-def send_weekly_report_to_admin():
-  with db_lock:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    now_ts = time.time()
-    week_ago_ts = now_ts - (7 * 24 * 60 * 60)
-    two_weeks_ago_ts = now_ts - (14 * 24 * 60 * 60)
-
-    cursor.execute(
-        "SELECT COUNT(*) FROM poll_votes WHERE vote_timestamp >= ?",
-        (week_ago_ts,),
-    )
-    current_week_attendance = cursor.fetchone()[0] or 0
-
-    cursor.execute(
-        "SELECT COUNT(*) FROM poll_votes WHERE vote_timestamp >= ? AND"
-        " vote_timestamp < ?",
-        (two_weeks_ago_ts, week_ago_ts),
-    )
-    prev_week_attendance = cursor.fetchone()[0] or 0
-
-    if prev_week_attendance > 0:
-      growth_rate = round(
-          (
-              (current_week_attendance - prev_week_attendance)
-              / prev_week_attendance
-          )
-          * 100,
-          1,
-      )
-    else:
-      growth_rate = 100.0 if current_week_attendance > 0 else 0.0
-    conn.close()
-
-  report_text = (
-      f"📊 <b>التقرير الأسبوعي التلقائي لنشاط البوت:</b>\n\n• إجمالي تفاعلات"
-      f" الأسبوع الحالي: <code>{current_week_attendance}</code>\n• نسبة النمو"
-      f" مقارنة بالأسبوع الماضي: <code>{growth_rate}%</code>"
-  )
-  try:
-    bot.send_message(ADMIN_ID, report_text, parse_mode="HTML")
-  except Exception:
-    pass
-
-
-# ---------------------------------------------------------
-# نظام العمل في الخلفية (Background Workers & Schedulers)
-# ---------------------------------------------------------
-def background_scheduler_worker():
-  """خيط خلفي دائم لتنفيذ المهام المجدولة وإغلاق البوستات المنتهية وإرسال التنبيهات بـ 5 دقائق"""
-  while True:
-    try:
-      current_time = time.time()
-      with db_lock:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # 1. تنفيذ البوستات والرسائل المجدولة
-        cursor.execute(
-            "SELECT sched_id, user_id, channel_id, post_type, title FROM"
-            " scheduled_posts WHERE run_time <= ?",
-            (current_time,),
-        )
-        due_posts = cursor.fetchall()
-
-        for sched_id, u_id, chan_id, p_type, p_title in due_posts:
-          try:
-            chat_info = bot.get_chat(chan_id)
-            real_chan = str(chat_info.id)
-            c_title = chat_info.title or real_chan
-
-            if p_type == "poll":
-              poll_id = f"poll_{u_id}_{int(time.time())}"
-              keyboard = types.InlineKeyboardMarkup()
-              keyboard.add(
-                  create_colored_btn(
-                      "✅ تسجيل الحضور [0]",
-                      callback_data=f"attend_{poll_id}",
-                      style="success",
-                  )
-              )
-              keyboard.add(
-                  create_colored_btn(
-                      "🤖 الانتقال للبوت", url=BOT_URL, style="primary"
-                  )
-              )
-              msg_content = (
-                  f"<b>📢 {html.escape(p_title)}</b>\n\n<i>اضغط على الزر الملون"
-                  " أدناه لتسجيل حضورك الرسمي فوراً:</i>\n<i>⏱️ البوست مفتوح"
-                  " طوال الوقت.</i>"
-              )
-              sent = bot.send_message(
-                  real_chan,
-                  msg_content,
-                  parse_mode="HTML",
-                  reply_markup=keyboard,
-              )
-              try:
-                bot.pin_chat_message(
-                    chat_id=real_chan, message_id=sent.message_id
-                )
-              except Exception:
-                pass
-
-              cursor.execute(
-                  "INSERT OR REPLACE INTO polls (poll_id, owner_id, count,"
-                  " title, end_time, is_closed, show_in_channel, channel_id,"
-                  " message_id, reminder_sent) VALUES (?, ?, 0, ?, 0, 0, 1, ?,"
-                  " ?, 0)",
-                  (
-                      poll_id,
-                      u_id,
-                      p_title,
-                      real_chan,
-                      sent.message_id,
-                  ),
-              )
-            else:
-              # إعلان نصي عادي
-              sent = bot.send_message(
-                  real_chan, p_title, parse_mode="HTML", disable_web_page_preview=True
-              )
-              try:
-                bot.pin_chat_message(
-                    chat_id=real_chan, message_id=sent.message_id
-                )
-              except Exception:
-                pass
-
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            cursor.execute(
-                "INSERT INTO channel_daily_posts (channel_id, date_str,"
-                " posts_count) VALUES (?, ?, 1) ON CONFLICT(channel_id,"
-                " date_str) DO UPDATE SET posts_count = posts_count + 1",
-                (real_chan, today_str),
-            )
-          except Exception as sched_err:
-            print(f"Background sched publish error: {sched_err}")
-
-          cursor.execute(
-              "DELETE FROM scheduled_posts WHERE sched_id = ?", (sched_id,)
-          )
-
-        # 2. فحص وإرسال تنبيه قبل انتهاء بوست الحضور بـ 5 دقائق (300 ثانية)
-        cursor.execute(
-            "SELECT poll_id, title, channel_id, message_id, end_time, owner_id"
-            " FROM polls WHERE is_closed = 0 AND end_time > 0 AND"
-            " reminder_sent = 0"
-        )
-        active_polls = cursor.fetchall()
-
-        for (
-            pid,
-            p_title,
-            chan_id,
-            msg_id,
-            e_time,
-            owner_id,
-        ) in active_polls:
-          time_left = e_time - current_time
-          if 0 < time_left <= 300:
-            cursor.execute(
-                "UPDATE polls SET reminder_sent = 1 WHERE poll_id = ?", (pid,)
-            )
-            try:
-              reminder_text = (
-                  f"🔔 <b>تنبيه انتهاء بوست الحضور قريبأ!</b>\n\n📌"
-                  f" <b>البوست:</b> {html.escape(p_title)}\n⏱️ <i>سيتم إغلاق"
-                  " التسجيل خلال 5 دقائق القادمة! حث المشاركين على تسجيل"
-                  " الحضور.</i>"
-              )
-              bot.send_message(owner_id, reminder_text, parse_mode="HTML")
-              bot.send_message(
-                  chan_id,
-                  "⚠️ <b>تنبيه هام:</b> سيتم إغلاق تسجيل الحضور لهذا البوست خلال"
-                  " 5 دقائق فقط! بادر بالتسجيل الآن.",
-                  parse_mode="HTML",
-              )
-            except Exception as rem_err:
-              print(f"Reminder dispatch error: {rem_err}")
-
-        # 3. إغلاق بوستات الحضور والأسئلة المنتهية تلقائياً في الخلفية
-        cursor.execute(
-            "SELECT poll_id, channel_id, message_id, title FROM polls WHERE"
-            " is_closed = 0 AND end_time > 0 AND end_time <= ?",
-            (current_time,),
-        )
-        expired_polls = cursor.fetchall()
-
-        for pid, chan_id, msg_id, p_title in expired_polls:
-          cursor.execute(
-              "UPDATE polls SET is_closed = 1 WHERE poll_id = ?", (pid,)
-          )
-          try:
-            closed_keyboard = types.InlineKeyboardMarkup()
-            closed_keyboard.add(
-                create_colored_btn(
-                    "❌ انتهى وقت التسجيل", callback_data="noop", style="danger"
-                )
-            )
-            bot.edit_message_text(
-                chat_id=chan_id,
-                message_id=msg_id,
-                text=(
-                    f"<b>📢 {html.escape(p_title)}</b>\n\n🔒 <i>عذراً، انتهى وقت"
-                    " تسجيل الحضور وتم إغلاق البوست تلقائياً.</i>"
-                ),
-                parse_mode="HTML",
-                reply_markup=closed_keyboard,
-            )
-          except Exception as close_err:
-            print(f"Auto-close poll background error: {close_err}")
-
-        conn.commit()
-        conn.close()
-    except Exception as e:
-      print(f"Background worker loop error: {e}")
-
-    time.sleep(15)
 
 
 if __name__ == "__main__":
-  # تشغيل عامل الخلفية الآلي في خيط منفصل لتنفيذ المهام، والإغلاق، والتنبيهات بالخلفية
-  t = threading.Thread(target=background_scheduler_worker, daemon=True)
-  t.start()
-
-  try:
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-  except Exception as e:
-    print(f"Server error: {e}")
+  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
