@@ -1,5 +1,1 @@
-aiogram
-aiosqlite
-apscheduler
-
-
+python-telegram-bot[webhooks]==20.8
